@@ -48,6 +48,28 @@ Open `dashboard.html` in any browser — Plotly.js is embedded, so it works
 offline. Strategies surface indicators on the price chart by calling
 `ctx.record(instrument, name=value)` (see `sma_crossover`).
 
+## Built-in strategies
+
+| `--strategy` | Description |
+|---|---|
+| `sma_crossover` | Fast/slow SMA crossover (records the SMAs for the chart). |
+| `opening_range` | Opening-range breakout via the `SessionStrategy` base. |
+| `session_breakout` | Breakout of the 09:30–10:00 opening range; overlays OR + Asia levels. |
+| `asia_reversion` | Fades the London break of the Asia range back to the 50% level, with a 1%-risk stop/target bracket; flat by 16:00 ET. |
+
+## Bracket orders & risk sizing
+
+Strategies can place resting **stop-loss / take-profit brackets** (GTC, OCO,
+reduce-only) and size by risk:
+
+```python
+units = ctx.units_for_risk(inst, stop_price=stop, risk_pct=0.01)  # risk 1% of equity
+ctx.enter(inst, Side.SELL, units, stop_loss=stop, take_profit=target)  # OCO bracket
+```
+
+The stop and target rest across bars until one fills (cancelling the other), and
+only ever reduce the position. See `asia_reversion` for a full example.
+
 ## Writing a strategy
 
 Subclass `Strategy` and implement `on_bar`:

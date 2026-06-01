@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -10,6 +10,7 @@ import pandas as pd
 
 from btengine.core.broker import SimulatedBroker
 from btengine.core.events import OrderEvent, SignalEvent
+from btengine.core.order import Order, OrderType, Side
 from btengine.core.portfolio import Portfolio, Position
 
 
@@ -19,6 +20,7 @@ class Context:
     def __init__(self, engine: "Backtester"):
         self._engine = engine
         self._signals: List[SignalEvent] = []
+        self._orders: List[OrderEvent] = []
 
     # --- time & data (causal: never includes future bars) ------------------
     @property
@@ -89,6 +91,67 @@ class Context:
     def order_target_units(self, instrument: str, target: float) -> None:
         """Trade the delta needed to reach an absolute signed position of `target`."""
         self.signal(instrument, target - self.units(instrument))
+
+    # --- advanced orders: resting brackets, OCO, risk sizing ---------------
+    def submit(self, order: Order) -> None:
+        """Queue an arbitrary Order (e.g. GTC/OCO/reduce-only stop or limit)."""
+        self._orders.append(OrderEvent(self.now, order))
+
+    def enter(
+        self,
+        instrument: str,
+        side: Side,
+        units: float,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        tag: Optional[str] = None,
+    ) -> None:
+        """Market entry plus optional GTC reduce-only stop/target bracket (OCO).
+
+        The stop and target are placed on the opposite side and linked so that
+        whichever fills first cancels the other.
+        """
+        if units <= 0:
+            return
+        self.submit(Order(instrument, side, units, OrderType.MARKET, tag=tag or "entry"))
+        exit_side = Side.SELL if side is Side.BUY else Side.BUY
+        group = f"{instrument}@{self.now.value}"
+        if stop_loss is not None:
+            self.submit(Order(instrument, exit_side, units, OrderType.STOP,
+                              stop_price=stop_loss, tif="GTC", reduce_only=True,
+                              oco_group=group, tag="stop"))
+        if take_profit is not None:
+            self.submit(Order(instrument, exit_side, units, OrderType.LIMIT,
+                              limit_price=take_profit, tif="GTC", reduce_only=True,
+                              oco_group=group, tag="tp"))
+
+    def cancel_all(self, instrument: str) -> None:
+        """Cancel all resting and not-yet-active orders for `instrument`."""
+        self._engine.cancel_orders(instrument)
+        self._orders = [oe for oe in self._orders if oe.order.instrument != instrument]
+
+    def units_for_risk(
+        self,
+        instrument: str,
+        stop_price: float,
+        entry_price: Optional[float] = None,
+        risk_pct: float = 0.01,
+    ) -> float:
+        """Position size (units) so that hitting `stop_price` loses ~`risk_pct` of equity.
+
+        Uses the current price as the assumed entry if `entry_price` is omitted.
+        """
+        entry = entry_price if entry_price is not None else self.price(instrument)
+        if entry is None:
+            return 0.0
+        per_unit = abs(entry - stop_price)
+        if per_unit <= 0:
+            return 0.0
+        return risk_pct * self.equity / per_unit
+
+    def drain_orders(self) -> List[OrderEvent]:
+        orders, self._orders = self._orders, []
+        return orders
 
     def record(self, instrument: Optional[str] = None, **values: float) -> None:
         """Record named series for the current bar (e.g. indicator values).
@@ -163,6 +226,7 @@ class Backtester:
         self._counts: Dict[str, int] = {inst: 0 for inst in self.instruments}
         self.last_close: Dict[str, float] = {}
         self._records: Dict[pd.Timestamp, Dict[str, float]] = {}
+        self._active_orders: List[OrderEvent] = []
 
     # --- data access used by Context --------------------------------------
     def history(self, instrument: str) -> pd.DataFrame:
@@ -170,6 +234,33 @@ class Backtester:
 
     def record_values(self, timestamp: pd.Timestamp, values: Dict[str, float]) -> None:
         self._records.setdefault(timestamp, {}).update(values)
+
+    def cancel_orders(self, instrument: str) -> None:
+        """Remove all resting/active orders for `instrument`."""
+        self._active_orders = [oe for oe in self._active_orders
+                               if oe.order.instrument != instrument]
+
+    def _try_fill(self, order_event: OrderEvent, bar: pd.Series, ts: pd.Timestamp) -> bool:
+        """Attempt to fill one order against `bar`. Returns True if it filled.
+
+        Honors reduce-only: such orders only close an existing opposite position
+        and never flip it; their size is clamped to the open position.
+        """
+        order = order_event.order
+        exec_units = order.units
+        if order.reduce_only:
+            pos = self.portfolio.units(order.instrument)
+            increases = pos == 0 or (pos > 0) == (order.side is Side.BUY)
+            if increases:
+                return False  # nothing to reduce (flat or same direction)
+            exec_units = min(order.units, abs(pos))
+
+        exec_order = order if exec_units == order.units else replace(order, units=exec_units)
+        fill = self.broker.execute(OrderEvent(order_event.timestamp, exec_order), bar, ts)
+        if fill is None:
+            return False
+        self.portfolio.on_fill(fill)
+        return True
 
     def _records_frame(self) -> pd.DataFrame:
         if not self._records:
@@ -189,7 +280,7 @@ class Backtester:
     # --- main loop ---------------------------------------------------------
     def run(self) -> BacktestResult:
         ctx = Context(self)
-        pending: List[OrderEvent] = []
+        self._active_orders = []
 
         self.strategy.bind(ctx)
         self.strategy.on_start(ctx)
@@ -208,19 +299,32 @@ class Backtester:
                     bars_now[inst] = bar
                     self.last_close[inst] = float(bar["close"])
 
-            # 1. Execute orders queued on the previous bar, at this bar's open.
-            still_pending: List[OrderEvent] = []
-            for order_event in pending:
-                inst = order_event.order.instrument
-                if inst in bars_now:
-                    fill = self.broker.execute(order_event, bars_now[inst], ts)
-                    if fill is not None:
-                        self.portfolio.on_fill(fill)
-                    # MARKET fills always; LIMIT/STOP that miss are dropped (day order).
-                else:
-                    # No bar for this instrument yet; keep waiting.
-                    still_pending.append(order_event)
-            pending = still_pending
+            # 1. Process active orders against this bar. Orders for instruments
+            #    without a bar this timestamp keep waiting. Entries fill before
+            #    reduce-only exits so a same-bar bracket sees the open position.
+            waiting = [oe for oe in self._active_orders if oe.order.instrument not in bars_now]
+            to_process = [oe for oe in self._active_orders if oe.order.instrument in bars_now]
+            to_process.sort(key=lambda oe: oe.order.reduce_only)  # entries (False) first
+
+            cancelled_groups = set()
+            survivors: List[OrderEvent] = list(waiting)
+            for order_event in to_process:
+                order = order_event.order
+                if order.oco_group and order.oco_group in cancelled_groups:
+                    continue  # sibling already filled -> cancel this leg
+                if self._try_fill(order_event, bars_now[order.instrument], ts):
+                    if order.oco_group:
+                        cancelled_groups.add(order.oco_group)
+                    # filled -> not kept
+                elif order.tif == "GTC":
+                    survivors.append(order_event)  # rests until filled/cancelled
+                # DAY orders that didn't fill are dropped (expired)
+
+            # Drop any survivors whose OCO group was triggered this bar.
+            self._active_orders = [
+                oe for oe in survivors
+                if not (oe.order.oco_group and oe.order.oco_group in cancelled_groups)
+            ]
 
             # 2. Mark equity at the close (forward-filled for stale instruments).
             self.portfolio.mark(ts, self.last_close)
@@ -228,11 +332,12 @@ class Backtester:
             # 3. Strategy reacts to data up to this bar's close.
             self.strategy.on_bar(ctx)
 
-            # 4. Convert signals into orders, active on the next bar.
+            # 4. Queue new orders (from signals and direct submissions), active next bar.
             for signal in ctx.drain_signals():
                 order_event = self.portfolio.create_order(signal)
                 if order_event is not None:
-                    pending.append(order_event)
+                    self._active_orders.append(order_event)
+            self._active_orders.extend(ctx.drain_orders())
 
         self.strategy.on_finish(ctx)
 

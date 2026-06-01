@@ -26,8 +26,14 @@ class Order:
     """An instruction to trade `units` of `instrument`.
 
     Orders are placed on bar t and become active on bar t+1 (no look-ahead).
-    An unfilled LIMIT/STOP order is treated as a day order: cancelled if the
-    next bar does not satisfy it.
+
+    Time-in-force:
+      - "DAY" (default): active for one bar; cancelled if that bar doesn't fill it.
+      - "GTC": rests across bars until filled or cancelled (e.g. stop-loss / take-profit).
+
+    `reduce_only` orders may only shrink/close an existing opposite position (never
+    open or increase one). `oco_group` links orders so that when one fills, its
+    siblings are cancelled (one-cancels-other) — used for stop+target brackets.
     """
 
     instrument: str
@@ -36,6 +42,10 @@ class Order:
     order_type: OrderType = OrderType.MARKET
     limit_price: Optional[float] = None
     stop_price: Optional[float] = None
+    tif: str = "DAY"
+    reduce_only: bool = False
+    oco_group: Optional[str] = None
+    tag: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.units <= 0:
@@ -44,6 +54,8 @@ class Order:
             raise ValueError("LIMIT order requires limit_price")
         if self.order_type is OrderType.STOP and self.stop_price is None:
             raise ValueError("STOP order requires stop_price")
+        if self.tif not in ("DAY", "GTC"):
+            raise ValueError("tif must be 'DAY' or 'GTC'")
 
     @property
     def signed_units(self) -> float:

@@ -1,4 +1,5 @@
 """Example strategies."""
+from btengine.strategy.examples.asia_reversion import AsiaReversion
 from btengine.strategy.examples.opening_range import OpeningRange
 from btengine.strategy.examples.session_breakout import SessionBreakout
 from btengine.strategy.examples.sma_crossover import SmaCrossover
@@ -8,6 +9,7 @@ REGISTRY = {
     "sma_crossover": SmaCrossover,
     "opening_range": OpeningRange,
     "session_breakout": SessionBreakout,
+    "asia_reversion": AsiaReversion,
 }
 
-__all__ = ["SmaCrossover", "OpeningRange", "SessionBreakout", "REGISTRY"]
+__all__ = ["SmaCrossover", "OpeningRange", "SessionBreakout", "AsiaReversion", "REGISTRY"]
