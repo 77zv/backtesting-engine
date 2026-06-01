@@ -29,6 +29,15 @@ class Context:
     def instruments(self) -> List[str]:
         return self._engine.instruments
 
+    def local(self, tz: Optional[str] = None) -> pd.Timestamp:
+        """The current time converted to an IANA timezone (DST-correct per instant).
+
+        `tz=None` returns the UTC timestamp unchanged. The host machine's local
+        timezone is never consulted, so backtests stay reproducible across machines.
+        Pass an explicit zone (e.g. "America/New_York") for session-relative logic.
+        """
+        return self.now if tz is None else self.now.tz_convert(tz)
+
     def history(self, instrument: str) -> pd.DataFrame:
         """OHLCV for `instrument` from the start up to and including the current bar."""
         return self._engine.history(instrument)

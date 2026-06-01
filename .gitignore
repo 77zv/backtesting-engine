@@ -11,8 +11,8 @@ dist/
 .venv/
 venv/
 
-# Data cache
-data/
+# Data cache (root-anchored so it does NOT match the src/btengine/data package)
+/data/
 *.parquet
 
 # Tooling
