@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -90,6 +90,18 @@ class Context:
         """Trade the delta needed to reach an absolute signed position of `target`."""
         self.signal(instrument, target - self.units(instrument))
 
+    def record(self, instrument: Optional[str] = None, **values: float) -> None:
+        """Record named series for the current bar (e.g. indicator values).
+
+        Captured into `BacktestResult.records` for plotting. If `instrument` is
+        given, keys are namespaced as "<instrument>.<name>" so the dashboard can
+        overlay them on that instrument's price panel.
+        """
+        if not values:
+            return
+        prefix = f"{instrument}." if instrument else ""
+        self._engine.record_values(self.now, {f"{prefix}{k}": v for k, v in values.items()})
+
     def drain_signals(self) -> List[SignalEvent]:
         signals, self._signals = self._signals, []
         return signals
@@ -101,6 +113,7 @@ class BacktestResult:
     equity: pd.Series
     trades: pd.DataFrame
     bars: int
+    records: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 class Backtester:
@@ -149,10 +162,21 @@ class Backtester:
         self._cursor = 0  # number of bars visible for each instrument at current_time
         self._counts: Dict[str, int] = {inst: 0 for inst in self.instruments}
         self.last_close: Dict[str, float] = {}
+        self._records: Dict[pd.Timestamp, Dict[str, float]] = {}
 
     # --- data access used by Context --------------------------------------
     def history(self, instrument: str) -> pd.DataFrame:
         return self._data[instrument].iloc[: self._counts[instrument]]
+
+    def record_values(self, timestamp: pd.Timestamp, values: Dict[str, float]) -> None:
+        self._records.setdefault(timestamp, {}).update(values)
+
+    def _records_frame(self) -> pd.DataFrame:
+        if not self._records:
+            return pd.DataFrame()
+        df = pd.DataFrame.from_dict(self._records, orient="index").sort_index()
+        df.index.name = "time"
+        return df
 
     def size_units(self, instrument: str) -> float:
         if self.size_fraction is None:
@@ -217,4 +241,5 @@ class Backtester:
             equity=self.portfolio.equity_series(),
             trades=self.portfolio.trades_frame(),
             bars=len(self.master_index),
+            records=self._records_frame(),
         )

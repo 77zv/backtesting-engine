@@ -22,6 +22,8 @@ class SmaCrossover(Strategy):
                 continue
             fast_ma = sma(close, self.fast)
             slow_ma = sma(close, self.slow)
+            # Capture indicators for the dashboard's price overlay.
+            ctx.record(inst, sma_fast=float(fast_ma.iloc[-1]), sma_slow=float(slow_ma.iloc[-1]))
             if fast_ma.iloc[-1] > slow_ma.iloc[-1]:
                 if ctx.units(inst) <= 0:
                     ctx.order_target_units(inst, ctx.default_size(inst))

@@ -32,6 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fast", type=int, default=20)
     p.add_argument("--slow", type=int, default=50)
     p.add_argument("--plot", default=None, help="Path to save an equity-curve PNG")
+    p.add_argument("--dashboard", default=None,
+                   help="Path to save an interactive HTML dashboard (price+trades+equity+analytics)")
     return p
 
 
@@ -76,6 +78,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.plot:
         out = plot_equity(result.equity, args.plot, title=title)
         print(f"\nEquity curve saved to {out}")
+
+    if args.dashboard:
+        from btengine.analytics import dashboard
+        out = dashboard(result, data, args.dashboard, title=title, granularity=args.granularity)
+        print(f"\nInteractive dashboard saved to {out}")
 
     return 0
 

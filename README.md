@@ -33,6 +33,21 @@ Run a backtest on cached data:
 bt-run --strategy sma_crossover --instruments EUR_USD,GBP_USD --granularity H1
 ```
 
+## Visualizing results
+
+Add `--plot` for a static equity/drawdown PNG, or `--dashboard` for a
+self-contained interactive HTML report (candlesticks + buy/sell markers +
+indicator overlays + equity, drawdown, and trade-analytics histograms):
+
+```bash
+bt-run --strategy sma_crossover --instruments EUR_USD --granularity H1 \
+       --plot equity.png --dashboard dashboard.html
+```
+
+Open `dashboard.html` in any browser — Plotly.js is embedded, so it works
+offline. Strategies surface indicators on the price chart by calling
+`ctx.record(instrument, name=value)` (see `sma_crossover`).
+
 ## Writing a strategy
 
 Subclass `Strategy` and implement `on_bar`:
