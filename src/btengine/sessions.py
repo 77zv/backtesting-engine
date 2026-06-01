@@ -87,7 +87,16 @@ class Session:
         return self.to_local(prev).date() != self.to_local(last).date()
 
 
-# --- presets ---------------------------------------------------------------
+# --- presets (all in US Eastern, the common reference for these windows) -----
 NYSE = Session("America/New_York", time(9, 30), time(16, 0))
 LONDON = Session("Europe/London", time(8, 0), time(16, 30))
 TOKYO = Session("Asia/Tokyo", time(9, 0), time(15, 0))  # no DST, mechanics identical
+
+# First 30 minutes after the US equity open — the classic opening range.
+OPENING_RANGE = Session("America/New_York", time(9, 30), time(10, 0))
+
+# Asia session expressed in New York time (20:00 -> 03:00, wraps midnight).
+# All weekdays so the Sunday-evening FX open is included; absent bars (weekends)
+# simply contribute nothing.
+ASIA = Session("America/New_York", time(20, 0), time(3, 0),
+               weekdays=frozenset({0, 1, 2, 3, 4, 5, 6}))
