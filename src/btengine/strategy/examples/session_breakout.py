@@ -20,12 +20,9 @@ from btengine.strategy.base import Strategy
 class SessionBreakout(Strategy):
     def on_bar(self, ctx) -> None:
         for inst in ctx.instruments:
-            hist = ctx.history(inst)
-            if len(hist) < 2:
-                continue
-
-            orr = opening_range(hist).iloc[-1]
-            asia = asia_range(hist).iloc[-1]
+            # Cached, causal indicator lookups (O(1) per bar).
+            orr = ctx.indicator(inst, "opening_range", opening_range)
+            asia = ctx.indicator(inst, "asia", asia_range)
 
             # Record levels for the dashboard overlay (NaN renders as a gap).
             ctx.record(

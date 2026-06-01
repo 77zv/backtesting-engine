@@ -53,6 +53,30 @@ class Context:
         bar = self.bar(instrument)
         return None if bar is None else float(bar["close"])
 
+    def indicator(self, instrument: str, key: str, fn):
+        """Value at the current bar of a *causal* indicator, computed once and cached.
+
+        `fn(full_ohlcv_df)` is evaluated a single time per (instrument, key) over the
+        instrument's whole series, then this returns only the row at the current bar
+        — so the per-bar cost is O(1) instead of recomputing over history each bar
+        (turning an O(n^2) backtest into O(n)). The indicator MUST be causal (value
+        at row i depends only on rows <= i); all of `btengine.indicators` qualify.
+        `key` distinguishes parameterizations, e.g. f"sma{period}".
+
+        Returns a scalar if `fn` yields a Series, or the row (a Series) if it yields
+        a DataFrame; NaN/NaN-row before any bar is available.
+        """
+        cache = self._engine._indicator_cache
+        ck = (instrument, key)
+        series = cache.get(ck)
+        if series is None:
+            series = fn(self._engine._data[instrument])
+            cache[ck] = series
+        count = self._engine._counts[instrument]
+        if count <= 0:
+            return float("nan") if series.ndim == 1 else pd.Series(np.nan, index=series.columns)
+        return series.iloc[count - 1]
+
     # --- account state -----------------------------------------------------
     @property
     def cash(self) -> float:
@@ -227,6 +251,7 @@ class Backtester:
         self.last_close: Dict[str, float] = {}
         self._records: Dict[pd.Timestamp, Dict[str, float]] = {}
         self._active_orders: List[OrderEvent] = []
+        self._indicator_cache: Dict[tuple, object] = {}
 
     # --- data access used by Context --------------------------------------
     def history(self, instrument: str) -> pd.DataFrame:
@@ -281,6 +306,7 @@ class Backtester:
     def run(self) -> BacktestResult:
         ctx = Context(self)
         self._active_orders = []
+        self._indicator_cache = {}
 
         self.strategy.bind(ctx)
         self.strategy.on_start(ctx)

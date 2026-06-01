@@ -48,7 +48,7 @@ class AsiaReversion(Strategy):
                 self._armed[inst] = None
                 self._traded[inst] = False
 
-            asia = asia_range(ctx.history(inst)).iloc[-1]
+            asia = ctx.indicator(inst, "asia", asia_range)  # cached; O(1) per bar
             hi, lo, mid = asia["high"], asia["low"], asia["mid"]
             if not (np.isnan(hi) or np.isnan(lo)):
                 ctx.record(inst, asia_high=hi, asia_low=lo, asia_mid=mid)
