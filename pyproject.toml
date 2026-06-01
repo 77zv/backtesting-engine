@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "btengine"
+version = "0.1.0"
+description = "Event-driven, multi-instrument backtesting engine using Oanda candlestick data"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "oandapyV20>=0.7.2",
+    "requests>=2.25",
+    "pandas>=1.3",
+    "numpy>=1.21",
+    "python-dotenv>=0.19",
+    "pyarrow>=8.0",
+    "matplotlib>=3.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+bt-download = "btengine.scripts.download_data:main"
+bt-run = "btengine.scripts.run_backtest:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
